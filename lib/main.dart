@@ -1,10 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_fortune_wheel/flutter_fortune_wheel.dart';
 import 'package:collection/collection.dart';
+import 'package:udp/udp.dart';
+import 'package:vong_xoay_may_man/app/app_sp.dart';
 
-void main() {
+import 'app/di.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await DependencyInjection.init();
   runApp(MyApp());
 }
 
@@ -30,6 +39,10 @@ class _LuckyWheelScreenState extends State<LuckyWheelScreen> {
     "Giải thưởng 1",
     "Giải thưởng 2",
     "Giải thưởng 3",
+    "Giải thưởng 4",
+    "Giải thưởng 1",
+    "Giải thưởng 2",
+    "Giải thưởng 3",
     "Giải thưởng 4"
   ];
   List<Color> colors = [];
@@ -38,10 +51,78 @@ class _LuckyWheelScreenState extends State<LuckyWheelScreen> {
   });
   static StreamSink<int>? _streamController;
 
+  List<String> receivedMessages = [];
+  UDP? udpReceiver;
+
   @override
   void initState() {
     super.initState();
+
+    options = AppSP.get('options') ??
+        [
+          "Giải thưởng 1",
+          "Giải thưởng 2",
+          "Giải thưởng 3",
+          "Giải thưởng 4",
+          "Giải thưởng 1",
+          "Giải thưởng 2",
+          "Giải thưởng 3",
+          "Giải thưởng 4"
+        ];
     _generateRandomColors();
+    _startListening();
+  }
+
+  UDP? udpListener;
+  // 🟢 1. Bắt đầu lắng nghe tín hiệu UDP từ Sender
+  Future<void> _startListening() async {
+    try {
+      udpListener = await UDP
+          .bind(Endpoint.any(port: Port(5001))); // Lắng nghe trên cổng 5001
+
+      udpListener!.asStream().listen((datagram) async {
+        if (datagram != null) {
+          String message = utf8.decode(datagram.data).trim();
+          print("📩 Nhận được tín hiệu từ thiết bị khác: $message");
+
+          // Nếu nhận được "WHERE_ARE_YOU", phản hồi lại "I_AM_HERE"
+          if (message == "WHERE_ARE_YOU") {
+            await _sendResponse(datagram.address);
+          } else {
+            setState(() {
+              options = message.split(',').map((e) => e.trim()).toList();
+              AppSP.set('options', options);
+              _generateRandomColors();
+            });
+          }
+        }
+      });
+
+      print("👂 Thiết bị đang lắng nghe trên cổng 5001...");
+    } catch (e) {
+      print("❌ Lỗi khi lắng nghe UDP: $e");
+    }
+  }
+
+  // 📡 2. Gửi phản hồi lại cho thiết bị gửi
+  Future<void> _sendResponse(InternetAddress senderAddress) async {
+    try {
+      UDP sender = await UDP.bind(Endpoint.any());
+      DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+      AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+      await sender.send(utf8.encode(androidInfo.name),
+          Endpoint.unicast(senderAddress, port: Port(5001)));
+      print("✅ Đã phản hồi: ${androidInfo.name}");
+      sender.close();
+    } catch (e) {
+      print("❌ Lỗi khi gửi phản hồi UDP: $e");
+    }
+  }
+
+  @override
+  void dispose() {
+    udpListener?.close();
+    super.dispose();
   }
 
   void _generateRandomColors() {
@@ -65,8 +146,8 @@ class _LuckyWheelScreenState extends State<LuckyWheelScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Image.asset("assets/congrats.png",
-                  height: 100), // Thêm ảnh chúc mừng
+              // Image.asset("assets/congrats.png",
+              //     height: 100), // Thêm ảnh chúc mừng
               SizedBox(height: 10),
               Text(
                 "Chúc mừng!",
@@ -142,90 +223,141 @@ class _LuckyWheelScreenState extends State<LuckyWheelScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text("Vòng Xoay May Mắn"),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.settings),
-            onPressed: _openSettingsDialog,
-          ),
-        ],
-      ),
-      body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
+      body: Stack(
         children: [
-          Stack(
-            alignment: Alignment.center,
+          Image.asset(
+            'assets/panel.png',
+            width: MediaQuery.of(context).size.width,
+            height: MediaQuery.of(context).size.height,
+            fit: BoxFit.fill,
+          ),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Vòng xoay may mắn có viền trắng
-              Align(
+              Stack(
                 alignment: Alignment.center,
-                child: Container(
-                  width: 300, // Điều chỉnh theo giao diện mong muốn
-                  height: 300,
-                  padding: EdgeInsets.all(8), // Viền trắng xung quanh
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(color: Colors.black26, blurRadius: 10)
-                    ],
-                  ),
-                  child: FortuneWheel(
-                    indicators: [],
-                    selected: _selected,
-                    items: options.mapIndexed((index, option) {
-                      return FortuneItem(
-                        child: Text(option,
-                            style: TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.bold)),
-                        style: FortuneItemStyle(
-                          color: colors[index],
-                          borderColor: Colors.white,
-                          borderWidth: 2,
-                        ),
-                      );
-                    }).toList(),
-                    onAnimationEnd: () {},
-                  ),
-                ),
-              ),
-              // Mũi tên cố định
-              Align(
-                alignment: Alignment.topCenter, // Mũi tên nằm trên cùng
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.red, // Màu mũi tên
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 6,
-                        spreadRadius: 2,
-                        offset: Offset(0, 2),
+                children: [
+                  // Vòng xoay may mắn có viền trắng
+                  Align(
+                    alignment: Alignment.center,
+                    child: Container(
+                      width: MediaQuery.of(context).size.width /
+                          2.5, // Điều chỉnh theo giao diện mong muốn
+                      height: MediaQuery.of(context).size.width / 2.5,
+                      padding: EdgeInsets.all(8), // Viền trắng xung quanh
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.yellow.shade700,
+                        boxShadow: [
+                          BoxShadow(color: Colors.black26, blurRadius: 10)
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Transform.rotate(
-                    angle: pi, // Xoay ngược mũi tên xuống
-                    child: Icon(
-                      Icons.arrow_drop_down_rounded,
-                      size: 36,
-                      color: Colors.white, // Màu icon mũi tên
+                      child: FortuneWheel(
+                        indicators: [],
+                        selected: _selected,
+                        items: options.mapIndexed((index, option) {
+                          return FortuneItem(
+                            child: Stack(
+                              children: [
+                                // Lớp viền
+                                Text(
+                                  option,
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    foreground: Paint()
+                                      ..style = PaintingStyle.stroke
+                                      ..strokeWidth = 01
+                                      ..color = const Color.fromARGB(
+                                          255, 0, 0, 0), // Màu viền
+                                  ),
+                                ),
+                                // Lớp chữ chính
+                                Text(
+                                  option,
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color.fromARGB(
+                                        255, 255, 255, 255), // Màu chữ
+                                  ),
+                                ),
+                              ],
+                            ),
+                            style: FortuneItemStyle(
+                              color: colors[index],
+                              borderColor: Colors.white,
+                              borderWidth: 2,
+                            ),
+                          );
+                        }).toList(),
+                        onAnimationEnd: () {},
+                      ),
                     ),
                   ),
+                  // Mũi tên cố định
+                  Align(
+                    alignment: Alignment.topCenter, // Mũi tên nằm trên cùng
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.red, // Màu mũi tên
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 6,
+                            spreadRadius: 2,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Transform.rotate(
+                        angle: pi, // Xoay ngược mũi tên xuống
+                        child: Icon(
+                          Icons.arrow_drop_down_rounded,
+                          size: 36,
+                          color: Colors.white, // Màu icon mũi tên
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _spinWheel,
+                style: ElevatedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  backgroundColor: Colors.pink,
+                  foregroundColor: Colors.white,
+                  elevation: 5,
+                  shadowColor: Colors.black26,
                 ),
-              )
+                child: Text(
+                  "QUAY",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
             ],
           ),
-          SizedBox(height: 20),
-          ElevatedButton(
-            onPressed: _spinWheel,
-            child: Text("QUAY"),
-          ),
+          // Positioned(
+          //   top: 0,
+          //   right: 5,
+          //   child: IconButton(
+          //     icon: Icon(
+          //       Icons.settings,
+          //       color: Colors.white,
+          //       size: 30,
+          //     ),
+          //     onPressed: _openSettingsDialog,
+          //   ),
+          // ),
         ],
       ),
     );
